@@ -25,6 +25,9 @@ class Term(object):
 	def order(self):
 		raise NotImplementedError
 
+	def copy(self):
+		raise NotImplementedError
+
 	def is_list(self):
 		return False
 
@@ -43,6 +46,9 @@ class Variable(Term):
 
 	def order(self):
 		return 0
+
+	def copy(self):
+		return Variable(self.rep)
 
 @total_ordering
 class PythonTerm(Term):
@@ -65,6 +71,9 @@ class PythonTerm(Term):
 			return self.value == other.value
 		else:
 			return False
+
+	def copy(self):
+		return self
 
 @total_ordering
 class Atom(Term):
@@ -95,6 +104,9 @@ class Atom(Term):
 
 	def order(self):
 		return 20
+
+	def copy(self):
+		return self
 
 	def is_list(self):
 		return self.symbol == "[]"
@@ -148,6 +160,9 @@ class CompoundTerm(Term):
 	def order(self):
 		return 30
 
+	def copy(self):
+		return CompoundTerm(self.functor, [t.copy() for t in self.args])
+
 	def is_list(self):
 		return self.functor is '.' and len(self.args) == 2
 
@@ -156,7 +171,7 @@ class Clause(object):
 	def __init__(self, head, body=()):
 		super(Clause, self).__init__()
 		self.head = head # a CompoundTerm
-		self.body = body # a list of CompoundTerm
+		self.body = body # a list of Terms; can be CompoundTerm or PythonTerm (if the value is a function (Runtime, Frame) -> bool)
 		
 class Frame(object):
 	"""docstring for Frame"""
@@ -167,8 +182,8 @@ class Frame(object):
 		super(Frame, self).__init__()
 		self.bindings = bindings
 
-	def deref(self, var):
-		val = var
+	def deref(self, term):
+		val = term
 		while val in self.bindings:
 			val = self.bindings[val]
 		return val
@@ -260,22 +275,105 @@ class Frame(object):
 	# end def unify
 # end class Frame
 
+def _builtin_repeat(runtime, frame):
+	while True:
+		yield frame
+
+def _builtin_cut(runtime, frame):
+	yield asf
+
+_conjunction_var1 = Variable('Conjunct1')
+_conjunction_clause = Clause(Co)
+
+builtinPredicates = {
+	('true', 0): [Clause(CompoundTerm('true'))],
+	('false', 0): [Clause(CompoundTerm('false'))],
+	('repeat', 0): [Clause(CompoundTerm('repeat'), [PythonTerm(_builtin_repeat)])],
+	('!', 0): [Clause(CompoundTerm('!'), [PythonTerm(_builtin_cut)])],
+	(',', 2): [Clause(CompoundTerm(',', [Variable('Conjunct1'), Variable('Conjunct2')]), )]
+}
+
 class Runtime(object):
 	"""docstring for Runtime"""
 	def __init__(self):
-		super(Runtime, self).__init__()
-		self.clauses = defaultdict(list) # dict from (pred name, arity) tuples to lists of Clauses
+		super(Runtime, self, stdin, stdout, stderr).__init__()
+		self.clauses = defaultdict(list, builtinPredicates) # dict from (pred name, arity) tuples to lists of Clauses
 		self.trace = False
 		self.debug = False
-		self.stack = []
+		self.stack = None
+		self.clauseStream = None
+		self.stdin = stdin
+		self.stdout = stdout
+		self.stderr = stderr
+
+	# def call_goal(self, goal, inFrame=Frame()):
+	# 	goal = inFrame.deref(goal)
+	# 	if isinstance(goal, PythonTerm):
+	# 			for frame in goal.value(self, inFrame)
+	# 				yield frame
+	# 	else:
+	# 		for clause in self.clauses[(goal.functor, len(goal.args))]:
+	# 			u = inFrame.unify(clause.head, goal)
+	# 			if u:
+	# 				for frame in itertools.ifilter()
+	# 				for subgoal in clause.body:
+	# 					for frame in self.call_goal(subgoal, u):
+	# 						frames.append
 
 	def call_goal(self, goal, inFrame=Frame()):
-		for clause in itertools.chain.from_iterable(self.clauses[(goal.functor, len(goal.args))]):
-			u = inFrame.unify(clause.head, goal)
-			if u:
-				for subgoal in clause.body:
-					for frame in self.call_goal(subgoal, u):
+		self.stack = [(goal, inFrame)]
+		self.clauseStream = None
+		subgoalStream = None
+		frameStream = None
+		frameStack = []
+		u = None
+		while True:
+			if 0 == len(self.stack):
+				return
+			elif 1 == len(self.stack):
+				if len(frameStack) > 0:
+					for frame in frameStack:
 						yield frame
+					frameStack.pop()
+					self.stack.pop()
+					continue
+			goal, inFrame = self.stack[-1]
+			goal = inFrame.deref(goal)
+			if isinstance(goal, PythonTerm):
+				# for frame in goal.value(self, inFrame):
+				# 	yield frame
+				frameStack.append(goal.value(self, inFrame))
+				self.stack.pop() # return
+				continue
+			else:
+				if frameStream:
+					try:
+						frame = frameStream.next()
+						asdf
+						continue
+					except StopIteration:
+						frameStream = None
+				if subgoalStream:
+					try:
+						subgoal = subgoalStream.next()
+						self.stack.append((subgoal, u)) # recursive call
+						continue
+					except StopIteration:
+						subgoalStream = None
+				if self.clauseStream:
+					try:
+						clause = self.clauseStream.next()
+						u = inFrame.unify(clause.head, goal)
+						if u:
+							subgoalStream = clause.body.__iter__()
+						continue
+					except StopIteration:
+						self.clauseStream = None
+		# end while True
+	# end def call_goal
 
 
 		
+
+
+
